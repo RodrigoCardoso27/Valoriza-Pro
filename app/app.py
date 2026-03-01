@@ -1,12 +1,11 @@
 from __future__ import annotations
 import sys
 import os
-import requests
 import pandas as pd
 import streamlit as st
 from pathlib import Path
 
-# ===== Path Fix (Streamlit Cloud) =====
+# ===== Ajuste de Caminhos =====
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -19,156 +18,149 @@ from cartola.team_builder import FORMATIONS
 st.set_page_config(page_title="Valoriza Pro | TabuadaRJ", layout="wide", page_icon="🪄")
 
 # ==========================================
-# 1. CSS PREMIUM: CAMPO EM PERSPECTIVA
+# 1. CSS DO CAMPO REALISTA (Estilo Aplicativo)
 # ==========================================
 CSS = """
 <style>
-.stApp { background-color: #0b0f19; color: #ffffff; }
+.stApp { background-color: #0b111a; color: #ffffff; }
 
-/* Gramado com Perspectiva Estilo Cartola */
+/* Gramado com Faixas e Perspectiva */
 .pitch-container {
-    background: #2e7d32;
+    background: #234f27;
     background-image: 
         linear-gradient(rgba(255, 255, 255, 0.1) 2px, transparent 2px),
-        repeating-linear-gradient(0deg, #2e7d32, #2e7d32 40px, #276b2a 40px, #276b2a 80px);
-    border: 3px solid rgba(255, 255, 255, 0.4);
-    border-radius: 12px;
-    height: 750px;
+        repeating-linear-gradient(0deg, #234f27, #234f27 50px, #1e4421 50px, #1e4421 100px);
+    border: 4px solid rgba(255, 255, 255, 0.3);
+    border-radius: 15px;
+    height: 800px;
     width: 100%;
     position: relative;
     margin: 20px 0;
-    overflow: hidden;
-    box-shadow: inset 0px 0px 100px rgba(0,0,0,0.5);
+    box-shadow: inset 0px 0px 80px rgba(0,0,0,0.6);
 }
 
-/* Linhas do Campo */
-.pitch-line-center { position: absolute; top: 50%; left: 0; right: 0; height: 2px; background: rgba(255, 255, 255, 0.3); }
+/* Marcações do Campo */
+.pitch-line-center { position: absolute; top: 50%; left: 0; right: 0; height: 2px; background: rgba(255, 255, 255, 0.2); }
 .pitch-circle-center { 
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    width: 120px; height: 120px; border: 2px solid rgba(255, 255, 255, 0.3); border-radius: 50%; 
+    width: 140px; height: 140px; border: 2px solid rgba(255, 255, 255, 0.2); border-radius: 50%; 
 }
 
-/* Card do Jogador (Slot) */
+/* Card do Atleta */
 .player-slot {
     position: absolute;
-    width: 90px;
+    width: 100px;
     display: flex;
     flex-direction: column;
     align-items: center;
     transform: translate(-50%, -50%);
-    transition: all 0.3s ease;
 }
 
-.card-box {
-    background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+.card-visual {
+    background: rgba(15, 23, 42, 0.95);
     border: 1px solid #334155;
-    border-radius: 8px;
-    width: 85px; padding: 8px 4px;
+    border-radius: 10px;
+    width: 90px; padding: 10px 5px;
     display: flex; flex-direction: column;
     align-items: center;
-    box-shadow: 0 8px 16px rgba(0,0,0,0.6);
+    box-shadow: 0 10px 20px rgba(0,0,0,0.7);
 }
 
-.card-box img { width: 55px; height: 55px; border-radius: 50%; border: 2px solid #22c55e; background: #475569; margin-bottom: 4px; }
-.card-name { font-size: 0.75rem; font-weight: 800; text-align: center; color: #f8fafc; line-height: 1; margin-bottom: 2px; }
-.card-info { font-size: 0.6rem; color: #94a3b8; text-transform: uppercase; }
-.card-price { font-size: 0.75rem; color: #4ade80; font-weight: 800; margin-top: 2px; }
+.card-visual img { 
+    width: 60px; height: 60px; border-radius: 50%; 
+    border: 2px solid #22c55e; background: #334155; margin-bottom: 5px; 
+}
 
-.pos-label {
+.card-name { font-size: 0.75rem; font-weight: 800; text-align: center; color: #f8fafc; line-height: 1.1; }
+.card-price { font-size: 0.75rem; color: #4ade80; font-weight: 800; margin-top: 3px; }
+
+.pos-tag {
     background: #22c55e; color: #020617;
     font-size: 0.65rem; font-weight: 900;
-    padding: 1px 6px; border-radius: 10px;
-    position: absolute; top: -10px; z-index: 10;
+    padding: 2px 8px; border-radius: 12px;
+    position: absolute; top: -12px; z-index: 5;
 }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
 
-# Coordenadas Visuais (Ajustadas para 3-4-3 do print)
-FORMATION_COORDS = {
+# Coordenadas de Posicionamento (Top/Left %)
+COORDS = {
     "3-4-3": {
-        "ATA": [(20, 15), (50, 12), (80, 15)],
-        "MEI": [(15, 38), (38, 42), (62, 42), (85, 38)],
-        "ZAG": [(25, 68), (50, 72), (75, 68)],
-        "GOL": [(50, 90)],
-        "TEC": [(85, 90)]
+        "ATA": [(25, 18), (50, 12), (75, 18)],
+        "MEI": [(15, 42), (38, 48), (62, 48), (85, 42)],
+        "ZAG": [(28, 72), (50, 78), (72, 72)],
+        "GOL": [(50, 92)], "TEC": [(90, 92)]
     },
     "4-3-3": {
-        "ATA": [(20, 15), (50, 12), (80, 15)],
-        "MEI": [(25, 42), (50, 45), (75, 42)],
-        "LAT": [(12, 65), (88, 65)],
-        "ZAG": [(38, 70), (62, 70)],
-        "GOL": [(50, 90)],
-        "TEC": [(85, 90)]
+        "ATA": [(25, 18), (50, 12), (75, 18)],
+        "MEI": [(30, 48), (50, 52), (70, 48)],
+        "LAT": [(12, 68), (88, 68)],
+        "ZAG": [(38, 75), (62, 75)],
+        "GOL": [(50, 92)], "TEC": [(90, 92)]
+    },
+    "4-4-2": {
+        "ATA": [(40, 18), (60, 18)],
+        "MEI": [(15, 45), (40, 50), (60, 50), (85, 45)],
+        "LAT": [(12, 68), (88, 68)],
+        "ZAG": [(38, 75), (62, 75)],
+        "GOL": [(50, 92)], "TEC": [(90, 92)]
     }
 }
 
 # ==========================================
-# 2. LÓGICA DE BACKEND (Blindada contra Erros)
+# 2. BACKEND SEGURO
 # ==========================================
 @st.cache_data(ttl=300)
-def fetch_api_data():
-    try:
-        client = CartolaClient(base_url="https://api.cartolafc.globo.com")
-        return client.mercado_status(), client.atletas_mercado()
-    except:
-        return {}, {}
+def get_cartola_data():
+    client = CartolaClient(base_url="https://api.cartolafc.globo.com")
+    return client.mercado_status(), client.atletas_mercado()
 
 def escalar_time_seguro(df, formacao_nome, orcamento_maximo):
-    """Garante a montagem do time sem KeyError e respeitando o saldo."""
     vagas = FORMATIONS.get(formacao_nome, {}).copy()
     
-    # Se o DF estiver vazio ou sem a coluna preco, aborta com erro amigável
+    # Proteção contra DataFrame vazio (Erro que você teve)
     if df.empty or "preco" not in df.columns:
-        return None, 0, "Nenhum jogador disponível no mercado com os filtros atuais."
+        return None, 0, "O mercado não retornou atletas. Tente ligar o 'Modo Pré-Temporada'."
 
     df_qualidade = df.sort_values(by=["score_final"], ascending=False)
-    df_preco = df.sort_values(by=["preco"], ascending=True)
     
-    # Validação financeira básica
-    custo_min = 0
-    for pos, qtd in vagas.items():
-        subset = df_preco[df_preco["posicao"] == pos]
-        if len(subset) < qtd:
-            return None, 0, f"Não há jogadores suficientes para a posição {pos}."
-        custo_min += subset.head(qtd)["preco"].sum()
-    
-    if custo_min > orcamento_maximo:
-        return None, 0, f"Saldo insuficiente para o time mais barato (Mínimo: C$ {custo_min:.2f})."
-
-    # Montagem do Time
     time_selecionado = []
     for pos, qtd in vagas.items():
-        time_selecionado.extend(df_qualidade[df_qualidade["posicao"] == pos].head(qtd).to_dict('records'))
+        jogadores_pos = df_qualidade[df_qualidade["posicao"] == pos]
+        if len(jogadores_pos) < qtd:
+            return None, 0, f"Atletas insuficientes para a posição: {pos}"
+        time_selecionado.extend(jogadores_pos.head(qtd).to_dict('records'))
     
     res_df = pd.DataFrame(time_selecionado)
-    saldo_final = orcamento_maximo - res_df["preco"].sum()
-    return res_df, saldo_final, ""
+    custo_total = res_df["preco"].sum()
+    
+    if custo_total > orcamento_maximo:
+        return None, 0, f"Orçamento insuficiente (Custo: C$ {custo_total:.2f})"
+        
+    return res_df, orcamento_maximo - custo_total, ""
 
 # ==========================================
-# 3. INTERFACE PRINCIPAL
+# 3. INTERFACE
 # ==========================================
 def main():
     st.markdown("<h1 style='text-align: center;'>🪄 Oráculo Valoriza Pro</h1>", unsafe_allow_html=True)
     
     with st.sidebar:
-        st.header("⚙️ Painel do Técnico")
+        st.header("⚙️ Painel de Controle")
         orcamento = st.number_input("Meu Patrimônio (C$)", value=100.0, min_value=30.0)
-        formacao = st.selectbox("Formação Tática", list(FORMATION_COORDS.keys()))
-        # Importante: Como é março, o padrão deve ser False para aparecerem jogadores
-        modo_teste = st.toggle("Modo Pré-Temporada (Ver todos os atletas)", value=True)
+        formacao = st.selectbox("Formação Tática", list(COORDS.keys()))
+        modo_teste = st.toggle("Modo Pré-Temporada (Ignorar 'Prováveis')", value=True)
 
     if st.button("🚀 Gerar Escalação Perfeita", type="primary", use_container_width=True):
-        with st.status("Processando dados...", expanded=False) as status:
-            status.write("📡 Conectando à API da Globo...")
-            status_cartola, mercado = fetch_api_data()
-            
+        with st.status("Analisando mercado...", expanded=False) as status:
+            status_cartola, mercado = get_cartola_data()
             rodada = int(status_cartola.get("rodada_atual") or 0)
+            
             df = make_dataframe(rodada, mercado, db_path=storage.DB_PATH_DEFAULT)
             df = valuation_heuristic(df)
             
-            status.write("🤖 Filtrando melhores opções...")
-            # only_probable=not modo_teste (Se modo_teste on, mostra tudo)
+            # Filtro Dinâmico
             df_base = filter_probables(df, only_probable=not modo_teste)
             
             time_ideal, saldo, erro = escalar_time_seguro(df_base, formacao, orcamento)
@@ -176,34 +168,33 @@ def main():
             if erro:
                 status.update(label="Falha na Escalação", state="error")
                 st.error(f"❌ {erro}")
-                st.info("Dica: Ative o 'Modo Pré-Temporada' na lateral para testar fora de época de jogos.")
             else:
-                status.update(label="Escalação Concluída!", state="complete")
+                status.update(label="Time Escalado!", state="complete")
                 
-                # --- RENDERIZAÇÃO DO CAMPO (Visual Print) ---
+                # --- RENDERIZAÇÃO DO CAMPO ---
                 html_cards = ""
-                count_tracker = {p: 0 for p in FORMATION_COORDS[formacao].keys()}
+                tracker = {p: 0 for p in COORDS[formacao].keys()}
                 
                 for _, jog in time_ideal.iterrows():
                     pos = jog['posicao']
-                    if pos in FORMATION_COORDS[formacao]:
-                        idx = count_tracker[pos]
-                        if idx < len(FORMATION_COORDS[formacao][pos]):
-                            left, top = FORMATION_COORDS[formacao][pos][idx]
-                            count_tracker[pos] += 1
+                    if pos in COORDS[formacao]:
+                        idx = tracker[pos]
+                        if idx < len(COORDS[formacao][pos]):
+                            left, top = COORDS[formacao][pos][idx]
+                            tracker[pos] += 1
                             
-                            # URL da foto tratada
-                            foto_raw = jog.get('foto')
-                            foto = foto_raw.replace("FORMATO", "140x140") if foto_raw else "https://via.placeholder.com/140"
+                            # Tratar foto
+                            foto_raw = jog.get('foto') or ""
+                            foto = foto_raw.replace("FORMATO", "140x140")
                             if foto.startswith("//"): foto = "https:" + foto
+                            if not foto: foto = "https://via.placeholder.com/140"
                             
                             html_cards += f"""
                             <div class="player-slot" style="left:{left}%; top:{top}%;">
-                                <div class="pos-label">{pos}</div>
-                                <div class="card-box">
+                                <div class="pos-tag">{pos}</div>
+                                <div class="card-visual">
                                     <img src="{foto}">
                                     <div class="card-name">{jog['apelido']}</div>
-                                    <div class="card-info">{jog.get('clube', '---')}</div>
                                     <div class="card-price">C$ {jog['preco']:.2f}</div>
                                 </div>
                             </div>
@@ -216,8 +207,8 @@ def main():
                     {html_cards}
                 </div>
                 """
-                st.components.v1.html(field_html, height=760)
-                st.metric("Saldo Restante", f"C$ {saldo:.2f}")
+                st.components.v1.html(field_html, height=820)
+                st.metric("Saldo Restante na Conta", f"C$ {saldo:.2f}", delta_color="normal")
 
 if __name__ == "__main__":
     main()
