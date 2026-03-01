@@ -261,7 +261,7 @@ def main():
                     
                     photo_map = {int(a.get("atleta_id", 0)): format_foto(a.get("foto")) for a in mercado.get("atletas", [])}
                     df["foto_url"] = df["athlete_id"].map(photo_map)
-                    df_base = filter_probables(df, only_probable=True)
+                    df_base = filter_probables(df, only_probable=False) # Lembre de voltar para True em Abril!
                     
                     if df_base.empty:
                         status_box.update(label="Sem atletas", state="error", expanded=False)
