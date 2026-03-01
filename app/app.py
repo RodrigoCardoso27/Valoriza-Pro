@@ -16,7 +16,7 @@ if str(ROOT) not in sys.path:
 from cartola.client import CartolaClient
 from cartola import storage
 from cartola.analytics import make_dataframe, valuation_heuristic, filter_probables
-from cartola.team_builder import build_team_greedy
+from cartola.team_builder import FORMATIONS
 
 st.set_page_config(page_title="Valoriza Pro | TabuadaRJ", layout="wide", page_icon="🪄")
 
@@ -66,7 +66,7 @@ div.stButton > button[kind="primary"]:hover {
     box-shadow: inset 0px 0px 50px rgba(0,0,0,0.8);
 }
 
-/* Cards dos Jogadores - Estilo Cartola Moderno */
+/* Cards dos Jogadores */
 .cartola-card {
     background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
     border: 1px solid #334155;
@@ -109,7 +109,7 @@ div.stButton > button[kind="primary"]:hover {
 st.markdown(CSS, unsafe_allow_html=True)
 
 # ==========================================
-# 2. MICROSERVIÇOS (APIs Independentes)
+# 2. MICROSERVIÇOS & LOGICA (Backend)
 # ==========================================
 def get_secret(key: str) -> str | None:
     try: return str(st.secrets[key]) if key in st.secrets else os.getenv(key)
@@ -117,13 +117,11 @@ def get_secret(key: str) -> str | None:
 
 @st.cache_data(ttl=300)
 def api_1_cartola():
-    """Busca Preços e Status Oficial do Game"""
     client = CartolaClient(base_url="https://api.cartolafc.globo.com")
     return client.mercado_status(), client.atletas_mercado()
 
 @st.cache_data(ttl=3600)
 def api_2_tabela_redundante() -> pd.DataFrame | None:
-    """Tenta a API oficial, se falhar, faz Web Scraping de failover"""
     token = get_secret("FOOTBALL_DATA_TOKEN")
     if token:
         try:
@@ -135,8 +133,6 @@ def api_2_tabela_redundante() -> pd.DataFrame | None:
                          "Pts": row.get("points"), "V": row.get("won"), "SG": row.get("goalDifference")} for row in table]
                 return pd.DataFrame(rows)
         except: pass
-    
-    # PLANO B (Failover): Scraping da Wikipedia
     try:
         url_fallback = "https://pt.wikipedia.org/wiki/Campeonato_Brasileiro_de_Futebol_de_2025_-_S%C3%A9rie_A"
         tabelas = pd.read_html(url_fallback, match="Classificação")
@@ -150,7 +146,6 @@ def api_2_tabela_redundante() -> pd.DataFrame | None:
 
 @st.cache_data(ttl=3600)
 def api_3_artilheiros() -> list:
-    """Busca os matadores. Retorna lista de nomes."""
     token = get_secret("FOOTBALL_DATA_TOKEN")
     if not token: return []
     try:
@@ -165,6 +160,59 @@ def api_3_artilheiros() -> list:
 def format_foto(raw: str | None) -> str:
     if not raw: return "https://s2.glbimg.com/a4E1AXX0iV9I9K_4v-d_XyUv-0I=/140x140/smart/https://s3.glbimg.com/v1/AUTH_58d78b787ec34892b5aaa0c7a14616a6/placeholder/perfil.png"
     return "https:" + raw.replace("FORMATO", "140x140") if raw.startswith("//") else raw.replace("FORMATO", "140x140")
+
+def escalar_time_seguro(df, formacao_nome, orcamento_maximo):
+    """Algoritmo de escalação com reserva de verba para garantir a montagem com orçamentos baixos."""
+    vagas = FORMATIONS.get(formacao_nome, {}).copy()
+    
+    # Prepara as listas (uma focada na nota, outra focada no preço mínimo)
+    df_qualidade = df.sort_values(by=["score_final"], ascending=False)
+    df_preco = df.sort_values(by=["preco"], ascending=True)
+    
+    # 1. Reserva o dinheiro dos jogadores mais baratos do mercado para cada vaga
+    custo_minimo_posicao = {}
+    for pos, qtd in vagas.items():
+        jogadores_pos = df_preco[df_preco["posicao"] == pos]
+        if len(jogadores_pos) < qtd:
+            return None, 0 # Faltou jogador no mercado pra essa posição
+        custo_minimo_posicao[pos] = jogadores_pos.head(qtd)["preco"].tolist()
+        
+    custo_minimo_total = sum(sum(precos) for precos in custo_minimo_posicao.values())
+    
+    if custo_minimo_total > orcamento_maximo:
+        return None, 0 # O orçamento é menor do que o time mais barato possível
+        
+    time_selecionado = []
+    custo_atual = 0.0
+    
+    # 2. Escala o time substituindo a reserva pelo jogador bom, se couber no bolso
+    for pos, qtd in vagas.items():
+        selecionados_pos = 0
+        for _, jog in df_qualidade[df_qualidade["posicao"] == pos].iterrows():
+            if selecionados_pos >= qtd:
+                break
+                
+            preco_jog = float(jog["preco"])
+            id_jog = jog["athlete_id"]
+            
+            if any(j["athlete_id"] == id_jog for j in time_selecionado):
+                continue
+                
+            preco_barato_reservado = custo_minimo_posicao[pos][selecionados_pos]
+            custo_simulado = custo_atual + preco_jog + (custo_minimo_total - preco_barato_reservado)
+            
+            if custo_simulado <= orcamento_maximo:
+                time_selecionado.append(jog)
+                custo_atual += preco_jog
+                custo_minimo_total -= preco_barato_reservado
+                selecionados_pos += 1
+                
+    if len(time_selecionado) < sum(vagas.values()):
+        return None, 0 # Falha de segurança
+        
+    time_df = pd.DataFrame(time_selecionado)
+    saldo = orcamento_maximo - custo_atual
+    return time_df, saldo
 
 # ==========================================
 # 3. INTERFACE PRINCIPAL
@@ -181,51 +229,63 @@ def main():
     
     with tab_oraculo:
         c1, c2 = st.columns(2)
-        orcamento = c1.number_input("💸 Seu Patrimônio (C$):", min_value=50.0, value=100.0, step=1.0)
-        formacao = c2.selectbox("📐 Formação Tática:", ["4-3-3", "3-4-3", "4-4-2", "3-5-2"], index=0)
+        orcamento = c1.number_input("💸 Seu Patrimônio (C$):", min_value=30.0, value=80.0, step=1.0, help="Insira suas cartoletas atuais. O algoritmo ajustará as contratações ao seu bolso.")
+        formacao = c2.selectbox("📐 Formação Tática:", ["4-3-3", "3-4-3", "4-4-2", "3-5-2"], index=0, help="A formação impacta na distribuição do orçamento.")
 
         st.write("")
         if st.button("🚀 Gerar Time Perfeito", type="primary", use_container_width=True):
-            with st.spinner("Conectando aos microserviços e analisando dados..."):
+            
+            # Novo visual de carregamento com etapas detalhadas
+            with st.status("Iniciando a Inteligência do Oráculo...", expanded=True) as status_box:
                 try:
-                    # Consome as APIs
-                    status, mercado = api_1_cartola()
+                    st.write("📡 Conectando aos servidores da Globo...")
+                    status_cartola, mercado = api_1_cartola()
+                    
+                    st.write("⚽ Buscando artilheiros do Brasileirão...")
                     artilheiros_reais = api_3_artilheiros()
                     
-                    rodada = int(status.get("rodada_atual") or 0)
+                    rodada = int(status_cartola.get("rodada_atual") or 0)
                     df = make_dataframe(rodada, mercado, db_path=storage.DB_PATH_DEFAULT)
                     
                     if df is None or df.empty:
+                        status_box.update(label="Falha na leitura", state="error", expanded=False)
                         st.warning("⚠️ O mercado do Cartola está fechado ou sem dados no momento.")
                         st.stop()
                     
-                    # Motor matemático base
+                    st.write("🧮 Calculando algoritmo de valorização de patrimônio...")
                     df = valuation_heuristic(df)
                     
-                    # 🧠 INTELIGÊNCIA: Cruzamento de Dados (Bônus para Artilheiros)
                     if artilheiros_reais and 'score_final' in df.columns:
                         for artilheiro in artilheiros_reais:
-                            # Se o nome do artilheiro bater com o apelido do Cartola, ganha 20% de bônus no score
                             df.loc[df['apelido'].str.contains(artilheiro, case=False, na=False), 'score_final'] *= 1.2
                     
-                    # Prepara fotos e filtra prováveis
                     photo_map = {int(a.get("atleta_id", 0)): format_foto(a.get("foto")) for a in mercado.get("atletas", [])}
                     df["foto_url"] = df["athlete_id"].map(photo_map)
                     df_base = filter_probables(df, only_probable=True)
                     
                     if df_base.empty:
+                        status_box.update(label="Sem atletas", state="error", expanded=False)
                         st.warning("⚠️ Não há jogadores prováveis no momento.")
                         st.stop()
                     
-                    # Escalação IA
-                    time_ideal, saldo_sobra = build_team_greedy(df_base, formation=formacao, budget=float(orcamento))
+                    st.write("🤖 Otimizando verba e fechando contratações...")
+                    time_ideal, saldo_sobra = escalar_time_seguro(df_base, formacao_nome=formacao, orcamento_maximo=float(orcamento))
                     
                     if time_ideal is None or time_ideal.empty:
-                        st.error("❌ Orçamento baixo demais para formar um time.")
+                        status_box.update(label="Orçamento insuficiente", state="error", expanded=False)
+                        st.error("❌ O seu patrimônio atual é menor que o custo do time mais barato possível para esta formação.")
                         st.stop()
 
+                    status_box.update(label="Time escalado com sucesso!", state="complete", expanded=False)
+                    
+                    # Exibe o resumo financeiro elegantemente
+                    custo_time = orcamento - saldo_sobra
+                    m1, m2 = st.columns(2)
+                    m1.metric("💰 Custo do Time", f"C$ {custo_time:.2f}")
+                    m2.metric("🏦 Saldo Restante", f"C$ {saldo_sobra:.2f}", delta=f"{saldo_sobra:.2f} livres", delta_color="normal")
+                    st.write("---")
+
                     # Renderização do Gramado
-                    st.success(f"✅ Análise concluída! Custo Total: C$ {orcamento - saldo_sobra:.2f} | Saldo Restante: C$ {saldo_sobra:.2f}")
                     st.markdown('<div class="pitch-container">', unsafe_allow_html=True)
                     
                     ordem_campo = ["ATA", "MEI", "LAT", "ZAG", "GOL", "TEC"]
@@ -244,10 +304,11 @@ def main():
                                         <div class="price">C$ {jog.get('preco', 0.0):.2f}</div>
                                     </div>
                                     """, unsafe_allow_html=True)
-                            st.write("") # Espaço entre as linhas do campo
+                            st.write("") 
                     st.markdown('</div>', unsafe_allow_html=True)
                     
                 except Exception as e:
+                    status_box.update(label="Erro no servidor", state="error", expanded=True)
                     st.error(f"Erro na execução da análise: {e}")
 
     with tab_brasileirao:
