@@ -112,16 +112,38 @@ def main():
                 # 1. Coleta e prepara os dados
                 rodada, status, mercado = fetch_data()
                 df = make_dataframe(rodada, mercado, db_path=storage.DB_PATH_DEFAULT)
-                df = valuation_heuristic(df) # Aplica a matemática de valorização
+                
+                # TRAVA 1: Verifica se o Cartola retornou dados
+                if df is None or df.empty:
+                    st.warning("⚠️ O mercado do Cartola não retornou atletas. Ele pode estar fechado ou em manutenção.")
+                    st.stop()
+                    
+                df = valuation_heuristic(df)
+                
+                # Para testar fora de temporada, você pode mudar only_probable para False temporariamente
                 df_base = status_and_photo(filter_probables(df, only_probable=True), mercado)
                 
-                # 2. IA escala o time (Greedy)
+                # TRAVA 2: Verifica se sobrou alguém após filtrar os prováveis
+                if df_base.empty:
+                    st.warning("⚠️ Não há nenhum jogador com status 'Provável' no momento (comum quando não há rodada próxima).")
+                    st.stop()
+                
+                # 2. IA escala o time
                 time_ideal, saldo_sobra = build_team_greedy(df_base, formation=formacao, budget=float(orcamento))
                 
+                # TRAVA 3: Verifica se a IA conseguiu montar o time
+                if time_ideal is None or time_ideal.empty:
+                    st.error("❌ A IA não conseguiu escalar ninguém. O orçamento pode estar muito baixo para os jogadores disponíveis.")
+                    st.stop()
+                
+                # Fallback de segurança: se a coluna se chamar 'posicao_id' em vez de 'posicao'
+                if "posicao" not in time_ideal.columns and "posicao_id" in time_ideal.columns:
+                    mapa_pos = {1: "GOL", 2: "LAT", 3: "ZAG", 4: "MEI", 5: "ATA", 6: "TEC"}
+                    time_ideal["posicao"] = time_ideal["posicao_id"].map(mapa_pos)
+
                 # 3. Exibe o resultado de forma organizada
                 st.success(f"Time montado! Custo total: C$ {orcamento - saldo_sobra:.2f} | Sobrou: C$ {saldo_sobra:.2f}")
                 
-                # Renderiza os jogadores agrupados por posição
                 posicoes_ordem = ["ATA", "MEI", "LAT", "ZAG", "GOL", "TEC"]
                 
                 for pos in posicoes_ordem:
@@ -133,16 +155,16 @@ def main():
                             with cols[i]:
                                 st.markdown(f"""
                                 <div class="jogador-card">
-                                    <img src="{jog['foto_url']}">
-                                    <div class="pos">{jog['posicao']}</div>
-                                    <div class="nome">{jog['apelido']}</div>
-                                    <div class="clube">{jog['clube']}</div>
-                                    <div class="preco">C$ {jog['preco']:.2f}</div>
+                                    <img src="{jog.get('foto_url', '')}">
+                                    <div class="pos">{jog.get('posicao', pos)}</div>
+                                    <div class="nome">{jog.get('apelido', 'Desconhecido')}</div>
+                                    <div class="clube">{jog.get('clube', '-')}</div>
+                                    <div class="preco">C$ {jog.get('preco', 0.0):.2f}</div>
                                 </div>
                                 """, unsafe_allow_html=True)
                                 
             except Exception as e:
-                st.error(f"Ocorreu um erro ao processar os dados do Cartola: {e}")
+                st.error(f"Ocorreu um erro interno ao processar os dados: {e}")
 
 if __name__ == "__main__":
     main()
